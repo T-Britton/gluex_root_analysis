@@ -340,6 +340,17 @@ void DHistogramAction_ParticleID::Initialize(void)
 
 	dTargetCenterZ = dParticleComboWrapper->Get_TargetCenter().Z();
 
+	// Make a standard list for particles
+	set<Particle_t> loc_ChargedHypoList;
+	loc_ChargedHypoList.insert(Positron);
+	loc_ChargedHypoList.insert(Electron);
+	loc_ChargedHypoList.insert(PiPlus);
+	loc_ChargedHypoList.insert(PiMinus);
+	loc_ChargedHypoList.insert(KPlus);
+	loc_ChargedHypoList.insert(KMinus);
+	loc_ChargedHypoList.insert(Proton);
+	loc_ChargedHypoList.insert(AntiProton);
+
 	// CREATE & GOTO MAIN FOLDER
 	CreateAndChangeTo_ActionDirectory();
 
@@ -347,7 +358,6 @@ void DHistogramAction_ParticleID::Initialize(void)
 	for(size_t loc_i = 0; loc_i < dParticleComboWrapper->Get_NumParticleComboSteps(); ++loc_i)
 	{
 		DParticleComboStep* locStep = dParticleComboWrapper->Get_ParticleComboStep(loc_i);
-
 		ostringstream locStepName;
 		locStepName << "Step" << loc_i << "__" << locStep->Get_StepName();
 		string locStepROOTName = locStep->Get_StepROOTName();
@@ -356,6 +366,7 @@ void DHistogramAction_ParticleID::Initialize(void)
 		// final state particles
 		for(size_t loc_j = 0; loc_j < locStep->Get_NumFinalParticles(); ++loc_j)
 		{
+			//  ********BRAD EDIT********
 			if(locStep->Get_FinalParticle(loc_j) == NULL)
 				continue; //not reconstructed at all
 
@@ -363,21 +374,39 @@ void DHistogramAction_ParticleID::Initialize(void)
 			int locDecayStepIndex = locStep->Get_DecayStepIndex(loc_j);
 			if(locDecayStepIndex != -2)
 				continue; //not measured
-
 			Particle_t locPID = locStep->Get_FinalPID(loc_j);
 			if(dHistMap_BetaVsP_BCAL[loc_i].find(locPID) != dHistMap_BetaVsP_BCAL[loc_i].end())
-				continue; //pid already done
-
+					continue; //pid already done
 			if(!locStepDirectoryCreatedFlag)
 			{
 				CreateAndChangeTo_Directory(locStepName.str());
 				locStepDirectoryCreatedFlag = true;
 			}
-
 			locParticleName = ParticleType(locPID);
 			CreateAndChangeTo_Directory(locParticleName);
 
-			Create_Hists(loc_i, locStepROOTName, locPID);
+			// Charged Hypo Loop   ********BRAD EDIT********
+			for(set<Particle_t>::iterator charged_hypo=loc_ChargedHypoList.begin(); charged_hypo!=loc_ChargedHypoList.end(); ++charged_hypo)
+			{
+				 
+				// Make sure only particle of the same charge are in the same directory
+				if(ParticleCharge(*charged_hypo) != ParticleCharge((locStep->Get_FinalParticle(loc_j))->Get_PID()))
+					continue;
+				if(dHistMap_BetaVsP_BCAL[loc_i].find(*charged_hypo) != dHistMap_BetaVsP_BCAL[loc_i].end())
+					continue; //charged hypo already done
+
+				// Check if PID matches final state particle to see if BG or Signal
+				string locChargedHypoNameEnd = "Background";
+				if(*charged_hypo == locPID)
+					locChargedHypoNameEnd = "Signal";
+				locParticleName = ParticleType(*charged_hypo);
+				ostringstream locChargedHypoName;
+				locChargedHypoName << locParticleName << "__" << locChargedHypoNameEnd;
+				CreateAndChangeTo_Directory(locChargedHypoName.str());
+
+				Create_Hists(loc_i, locStepROOTName, *charged_hypo);
+				gDirectory->cd("..");
+			} //end Charged Hypo Loop
 			gDirectory->cd("..");
 		} //end of particle loop
 
@@ -469,30 +498,38 @@ bool DHistogramAction_ParticleID::Perform_Action(void)
 		//final particles
 		for(size_t loc_j = 0; loc_j < locParticleComboStepWrapper->Get_NumFinalParticles(); ++loc_j)
 		{
-			DKinematicData* locKinematicData = locParticleComboStepWrapper->Get_FinalParticle(loc_j);
-			if(locKinematicData == NULL)
-				continue; //e.g. a decaying or missing particle whose params aren't set yet
+			// Charged Hypo Loop   ********BRAD EDIT********
+			for(UInt_t loc_k = 0; loc_k < dChargedHypoWrapper->Get_ArraySize(); ++loc_k)
+			{
+				DKinematicData* locKinematicData = locParticleComboStepWrapper->Get_FinalParticle(loc_j);
+				if(locKinematicData == NULL)
+					continue; //e.g. a decaying or missing particle whose params aren't set yet
 
-			//-2 if detected, -1 if missing, > 0 if decaying (step where it is the parent)
-			int locDecayStepIndex = locParticleComboStepWrapper->Get_DecayStepIndex(loc_j);
-			if(locDecayStepIndex != -2)
-				continue; //not measured
+				//-2 if detected, -1 if missing, > 0 if decaying (step where it is the parent)
+				int locDecayStepIndex = locParticleComboStepWrapper->Get_DecayStepIndex(loc_j);
+				if(locDecayStepIndex != -2)
+					continue; //not measured
 
-			//check if duplicate
-			set<Int_t>& locParticleSet = dPreviouslyHistogrammed[loc_i][locKinematicData->Get_PID()];
-			if(locParticleSet.find(locKinematicData->Get_ID()) != locParticleSet.end())
-				continue;
-
-			Fill_Hists(locKinematicData, loc_i);
-			locParticleSet.insert(locKinematicData->Get_ID());
+				//check if duplicate
+				dChargedHypoWrapper->Set_ArrayIndex(loc_k);
+				set<Int_t>& locParticleSet = dPreviouslyHistogrammed[loc_i][dChargedHypoWrapper->Get_PID()];
+				if(locParticleSet.find(dChargedHypoWrapper->Get_TrackID()) != locParticleSet.end()) 
+					continue;
+				// Make Sure You are Only Plotting Charged Hypos of the same charge
+				if(ParticleCharge(dChargedHypoWrapper->Get_PID()) != ParticleCharge(locKinematicData->Get_PID()))
+					continue;
+				Fill_Hists(dChargedHypoWrapper, loc_i, loc_k);
+				locParticleSet.insert(dChargedHypoWrapper->Get_TrackID());
+			} //end Charged Hypo Loop
 		} //end of particle loop
 	} //end of step loop
 
 	return true;
 }
 
-void DHistogramAction_ParticleID::Fill_Hists(const DKinematicData* locKinematicData, size_t locStepIndex)
+void DHistogramAction_ParticleID::Fill_Hists(DChargedTrackHypothesis* locKinematicData, size_t locStepIndex, UInt_t locHypoIndex)
 {
+	locKinematicData->Set_ArrayIndex(locHypoIndex);
 	double locRFTime = dParticleComboWrapper->Get_RFTime_Measured();
 
 	Particle_t locPID = locKinematicData->Get_PID();
@@ -505,12 +542,12 @@ void DHistogramAction_ParticleID::Fill_Hists(const DKinematicData* locKinematicD
 	double locBeta_Timing = 0.0;
 	if(ParticleCharge(locPID) != 0)
 	{
-		const DChargedTrackHypothesis* locChargedTrackHypothesis = dynamic_cast<const DChargedTrackHypothesis*>(locKinematicData);
+		const DChargedTrackHypothesis* locChargedTrackHypothesis = locKinematicData;
 		if(locChargedTrackHypothesis != NULL) {
 			locBeta_Timing = dUseKinFitFlag ? locChargedTrackHypothesis->Get_Beta_Timing() : locChargedTrackHypothesis->Get_Beta_Timing_Measured();
 			double locPropagatedRFTime = locRFTime + (locX4.Z() - dTargetCenterZ)/29.9792458;
 			double locDeltaT = locX4.T() - locPropagatedRFTime;
-
+			
 			if(locChargedTrackHypothesis->Get_Detector_System_Timing() == SYS_BCAL) {
 				dHistMap_BetaVsP_BCAL[locStepIndex][locPID]->Fill(locP, locBeta_Timing);
 				dHistMap_DeltaTVsP_BCAL[locStepIndex][locPID]->Fill(locP, locDeltaT);
