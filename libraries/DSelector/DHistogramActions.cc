@@ -491,6 +491,36 @@ void DHistogramAction_ParticleID::Create_Hists(int locStepIndex, string locStepR
 	
 bool DHistogramAction_ParticleID::Perform_Action(void)
 {
+	// First set up all of the wrappers to be used
+	map<size_t,DChargedTrackHypothesis*> loc_FinalState;
+	map<size_t,DParticleComboStep*> loc_Step;
+	DParticleCombo* locParticleComboWrapper = const_cast<DParticleCombo*>(dParticleComboWrapper);
+	for(size_t loc_i = 0; loc_i < locParticleComboWrapper->Get_NumParticleComboSteps(); ++loc_i)
+	{
+		loc_Step[loc_i] = locParticleComboWrapper->Get_ParticleComboStep(loc_i);
+		for(size_t loc_j = 0; loc_j < (loc_Step.find(loc_i)->second)->Get_NumFinalParticles(); ++loc_j)
+		{
+			loc_FinalState[loc_j] = static_cast<DChargedTrackHypothesis*>((loc_Step.find(loc_i)->second)->Get_FinalParticle(loc_j));
+		}
+	}
+
+	// Record which tracks are good combinations
+	map<int,set<Int_t> > loc_goodCombos;	
+	for(size_t loc_i = 0; loc_i < locParticleComboWrapper->Get_NumCombos(); ++loc_i)
+	{
+		locParticleComboWrapper->Set_ComboIndex(loc_i);
+		for(size_t loc_j = 0; loc_j < locParticleComboWrapper->Get_NumParticleComboSteps(); ++loc_j)
+		{
+			for(size_t loc_k = 0; loc_k < (loc_Step.find(loc_j)->second)->Get_NumFinalParticles(); ++loc_k)
+			{
+				Particle_t loc_PID = (loc_FinalState.find(loc_k)->second)->Get_PID();
+				Int_t loc_TrackID = (loc_FinalState.find(loc_k)->second)->Get_TrackID();
+				loc_goodCombos[ParticleCharge(loc_PID)].insert(loc_TrackID);
+			}
+		}
+	}
+
+	// Andddd now we plot stuff!
 	for(size_t loc_i = 0; loc_i < dParticleComboWrapper->Get_NumParticleComboSteps(); ++loc_i)
 	{
 		const DParticleComboStep* locParticleComboStepWrapper = dParticleComboWrapper->Get_ParticleComboStep(loc_i);
@@ -518,6 +548,11 @@ bool DHistogramAction_ParticleID::Perform_Action(void)
 				// Make Sure You are Only Plotting Charged Hypos of the same charge
 				if(ParticleCharge(dChargedHypoWrapper->Get_PID()) != ParticleCharge(locKinematicData->Get_PID()))
 					continue;
+				// Make Sure You are Only Plotting goodCombos
+				if((loc_goodCombos.find(ParticleCharge(dChargedHypoWrapper->Get_PID()))->second).find(dChargedHypoWrapper->Get_TrackID()) == (loc_goodCombos.find(ParticleCharge(dChargedHypoWrapper->Get_PID()))->second).end())
+				{
+					continue;
+				}
 				Fill_Hists(dChargedHypoWrapper, loc_i, loc_k);
 				locParticleSet.insert(dChargedHypoWrapper->Get_TrackID());
 			} //end Charged Hypo Loop
